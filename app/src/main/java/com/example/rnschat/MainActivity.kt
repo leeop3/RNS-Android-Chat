@@ -3,6 +3,7 @@ package com.example.rnschat
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -13,101 +14,119 @@ import androidx.core.app.ActivityCompat
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.ServerSocket
+import java.util.*
+import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
     private var rnsManager: PyObject? = null
     private lateinit var spinner: Spinner
-    private lateinit var btnConnect: Button
     private lateinit var tvLog: TextView
+    private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(30, 30, 30, 30)
         }
-
-        val tvTitle = TextView(this).apply { text = "Select Paired RNode:" }
         spinner = Spinner(this)
-        btnConnect = Button(this).apply { text = "Connect RNode" }
+        val btnConnect = Button(this).apply { text = "Connect RNode" }
         val etDest = EditText(this).apply { hint = "Recipient Hash" }
         val etMsg = EditText(this).apply { hint = "Message" }
-        val btnSend = Button(this).apply { text = "Send"; isEnabled = false }
+        val btnSend = Button(this).apply { text = "Send" }
         tvLog = TextView(this).apply { text = "Log:\n" }
 
-        layout.addView(tvTitle); layout.addView(spinner); layout.addView(btnConnect)
-        layout.addView(etDest); layout.addView(etMsg); layout.addView(btnSend); layout.addView(tvLog)
+        layout.addView(spinner); layout.addView(btnConnect); layout.addView(etDest); layout.addView(etMsg); layout.addView(btnSend); layout.addView(tvLog)
         setContentView(layout)
 
-        // Request permissions if needed
-        checkBtPermissions()
-
+        checkPermissions()
         if (!Python.isStarted()) Python.start(AndroidPlatform(this))
 
         btnConnect.setOnClickListener {
             val selected = spinner.selectedItem?.toString() ?: return@setOnClickListener
             val mac = selected.substringAfter("(").substringBefore(")")
-            
-            try {
-                val py = Python.getInstance()
-                val rnsModule = py.getModule("rns_manager")
-                rnsManager = rnsModule.get("ChatManager")?.call(object {
-                    @Suppress("unused")
-                    fun onMessage(msg: String) { runOnUiThread { tvLog.append("RECV: $msg\n") } }
-                    @Suppress("unused")
-                    fun onLog(log: String) { runOnUiThread { tvLog.append("$log\n") } }
-                }, mac)
-                
-                btnConnect.isEnabled = false
-                btnSend.isEnabled = true
-                tvLog.append("Connecting to $mac...\n")
-            } catch (e: Exception) {
-                tvLog.append("Error: ${e.message}\n")
-            }
+            startBridgeAndRNS(mac)
+            btnConnect.isEnabled = false
         }
 
         btnSend.setOnClickListener {
-            val dest = etDest.text.toString()
-            val msg = etMsg.text.toString()
-            if (dest.isNotEmpty() && msg.isNotEmpty()) {
-                rnsManager?.callAttr("send_text", dest, msg)
-                tvLog.append("SENT: $msg\n")
-                etMsg.text.clear()
+            rnsManager?.callAttr("send_text", etDest.text.toString(), etMsg.text.toString())
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startBridgeAndRNS(mac: String) {
+        thread {
+            try {
+                // 1. Connect Bluetooth
+                val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                val device = btManager.adapter.getRemoteDevice(mac)
+                val btSocket = device.createRfcommSocketToServiceRecord(SPP_UUID)
+                btSocket.connect()
+                runOnUiThread { tvLog.append("BT Connected to RNode\n") }
+
+                // 2. Start Local TCP Server
+                val serverSocket = ServerSocket(4242)
+                
+                // 3. Start RNS in Python (it will connect to 127.0.0.1:4242)
+                runOnUiThread {
+                    val py = Python.getInstance()
+                    rnsManager = py.getModule("rns_manager").get("ChatManager")?.call(object {
+                        fun onMessage(msg: String) { runOnUiThread { tvLog.append("RECV: $msg\n") } }
+                        fun onLog(log: String) { runOnUiThread { tvLog.append("$log\n") } }
+                    })
+                }
+
+                val tcpSocket = serverSocket.accept()
+                runOnUiThread { tvLog.append("Bridge Active: RNode <-> RNS\n") }
+
+                // 4. Start Bi-directional Data Transfer
+                val btIn = btSocket.inputStream
+                val btOut = btSocket.outputStream
+                val tcpIn = tcpSocket.getInputStream()
+                val tcpOut = tcpSocket.getOutputStream()
+
+                thread { copyStream(btIn, tcpOut) } // RNode to RNS
+                thread { copyStream(tcpIn, btOut) } // RNS to RNode
+
+            } catch (e: Exception) {
+                runOnUiThread { tvLog.append("Bridge Error: ${e.message}\n") }
             }
         }
     }
 
-    private fun checkBtPermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val permissions = arrayOf(
-                Manifest.permission.BLUETOOTH_CONNECT,
-                Manifest.permission.BLUETOOTH_SCAN
-            )
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, permissions, 101)
-                return
-            }
+    private fun copyStream(input: InputStream, output: OutputStream) {
+        val buffer = ByteArray(1024)
+        while (true) {
+            try {
+                val bytes = input.read(buffer)
+                if (bytes <= 0) break
+                output.write(buffer, 0, bytes)
+                output.flush()
+            } catch (e: Exception) { break }
         }
-        loadPairedDevices()
+    }
+
+    // ... (Keep your checkPermissions and loadPairedDevices functions from before)
+    private fun checkPermissions() {
+        val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+        } else {
+            arrayOf(Manifest.permission.BLUETOOTH, Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        if (perms.any { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
+            ActivityCompat.requestPermissions(this, perms, 101)
+        } else { loadPairedDevices() }
     }
 
     @SuppressLint("MissingPermission")
     private fun loadPairedDevices() {
-        try {
-            val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-            val devices = btManager.adapter.bondedDevices
-            val deviceNames = devices.map { "${it.name} (${it.address})" }
-            spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, deviceNames)
-        } catch (e: Exception) {
-            Toast.makeText(this, "Error loading devices: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 101 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            loadPairedDevices()
-        }
+        val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        val devices = btManager.adapter.bondedDevices
+        val deviceNames = devices.map { "${it.name} (${it.address})" }
+        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, deviceNames)
     }
 }
