@@ -7,39 +7,24 @@ plugins {
 android {
     namespace 'com.example.rnschat'
     compileSdk 34
-
     defaultConfig {
         applicationId "com.example.rnschat"
         minSdk 26
         targetSdk 34
         versionCode 1
         versionName "1.0"
-
-        ndk {
-            abiFilters "armeabi-v7a", "arm64-v8a"
-        }
-
-        // CORRECT PLACEMENT FOR CHAQUOPY
+        ndk { abiFilters "armeabi-v7a", "arm64-v8a" }
         python {
             version "3.10"
-            pip {
-                install "rns"
-                install "Pillow"
-                install "pyserial"
-            }
+            pip { install "rns"; install "pyserial"; install "Pillow" }
         }
     }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = '17'
-    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
 }
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.core:core-ktx:1.12.0'
 }
