@@ -18,6 +18,7 @@ class MainActivity : AppCompatActivity() {
     private var rnsManager: PyObject? = null
     private lateinit var spinner: Spinner
     private lateinit var btnConnect: Button
+    private lateinit var tvLog: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,13 +34,13 @@ class MainActivity : AppCompatActivity() {
         val etDest = EditText(this).apply { hint = "Recipient Hash" }
         val etMsg = EditText(this).apply { hint = "Message" }
         val btnSend = Button(this).apply { text = "Send"; isEnabled = false }
-        val tvLog = TextView(this).apply { text = "Log:\n" }
+        tvLog = TextView(this).apply { text = "Log:\n" }
 
         layout.addView(tvTitle); layout.addView(spinner); layout.addView(btnConnect)
         layout.addView(etDest); layout.addView(etMsg); layout.addView(btnSend); layout.addView(tvLog)
         setContentView(layout)
 
-        // 1. Check for Permissions
+        // Request permissions if needed
         checkBtPermissions()
 
         if (!Python.isStarted()) Python.start(AndroidPlatform(this))
@@ -48,27 +49,43 @@ class MainActivity : AppCompatActivity() {
             val selected = spinner.selectedItem?.toString() ?: return@setOnClickListener
             val mac = selected.substringAfter("(").substringBefore(")")
             
-            val py = Python.getInstance()
-            rnsManager = py.getModule("rns_manager").get("ChatManager")?.call(object {
-                fun onMessage(msg: String) { runOnUiThread { tvLog.append("RECV: $msg\n") } }
-                fun onLog(log: String) { runOnUiThread { tvLog.append("$log\n") } }
-            }, mac)
-            
-            btnConnect.isEnabled = false
-            btnSend.isEnabled = true
+            try {
+                val py = Python.getInstance()
+                val rnsModule = py.getModule("rns_manager")
+                rnsManager = rnsModule.get("ChatManager")?.call(object {
+                    @Suppress("unused")
+                    fun onMessage(msg: String) { runOnUiThread { tvLog.append("RECV: $msg\n") } }
+                    @Suppress("unused")
+                    fun onLog(log: String) { runOnUiThread { tvLog.append("$log\n") } }
+                }, mac)
+                
+                btnConnect.isEnabled = false
+                btnSend.isEnabled = true
+                tvLog.append("Connecting to $mac...\n")
+            } catch (e: Exception) {
+                tvLog.append("Error: ${e.message}\n")
+            }
         }
 
         btnSend.setOnClickListener {
-            rnsManager?.callAttr("send_text", etDest.text.toString(), etMsg.text.toString())
-            tvLog.append("SENT: ${etMsg.text}\n")
-            etMsg.text.clear()
+            val dest = etDest.text.toString()
+            val msg = etMsg.text.toString()
+            if (dest.isNotEmpty() && msg.isNotEmpty()) {
+                rnsManager?.callAttr("send_text", dest, msg)
+                tvLog.append("SENT: $msg\n")
+                etMsg.text.clear()
+            }
         }
     }
 
     private fun checkBtPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val permissions = arrayOf(
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN
+            )
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 101)
+                ActivityCompat.requestPermissions(this, permissions, 101)
                 return
             }
         }
@@ -77,4 +94,20 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun loadPairedDevices() {
-        val btManager = getSystemServi
+        try {
+            val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+            val devices = btManager.adapter.bondedDevices
+            val deviceNames = devices.map { "${it.name} (${it.address})" }
+            spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, deviceNames)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error loading devices: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 101 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            loadPairedDevices()
+        }
+    }
+}
