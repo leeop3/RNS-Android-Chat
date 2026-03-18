@@ -14,16 +14,14 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # This is the fix: Force Gradle 8.4
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: 8.4
 
       - name: Build with Gradle
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+        # We use 'gradle' directly because gradlew is missing from the repo
+        run: gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
