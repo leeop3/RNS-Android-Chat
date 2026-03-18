@@ -1,37 +1,35 @@
 package com.example.rnschat
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 
 class MainActivity : AppCompatActivity() {
     private var rnsManager: PyObject? = null
+    private lateinit var spinner: Spinner
+    private lateinit var btnConnect: Button
 
-    @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(30, 30, 30, 30)
         }
 
         val tvTitle = TextView(this).apply { text = "Select Paired RNode:" }
-        val spinner = Spinner(this)
-        
-        // Load Paired Devices
-        val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val devices = btManager.adapter.bondedDevices
-        val deviceNames = devices.map { "${it.name} (${it.address})" }
-        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, deviceNames)
-
-        val btnConnect = Button(this).apply { text = "Connect RNode" }
+        spinner = Spinner(this)
+        btnConnect = Button(this).apply { text = "Connect RNode" }
         val etDest = EditText(this).apply { hint = "Recipient Hash" }
         val etMsg = EditText(this).apply { hint = "Message" }
         val btnSend = Button(this).apply { text = "Send"; isEnabled = false }
@@ -40,6 +38,9 @@ class MainActivity : AppCompatActivity() {
         layout.addView(tvTitle); layout.addView(spinner); layout.addView(btnConnect)
         layout.addView(etDest); layout.addView(etMsg); layout.addView(btnSend); layout.addView(tvLog)
         setContentView(layout)
+
+        // 1. Check for Permissions
+        checkBtPermissions()
 
         if (!Python.isStarted()) Python.start(AndroidPlatform(this))
 
@@ -63,4 +64,17 @@ class MainActivity : AppCompatActivity() {
             etMsg.text.clear()
         }
     }
-}
+
+    private fun checkBtPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 101)
+                return
+            }
+        }
+        loadPairedDevices()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun loadPairedDevices() {
+        val btManager = getSystemServi
