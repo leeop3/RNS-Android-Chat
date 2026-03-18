@@ -10,6 +10,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+	val rnsManager = py.getModule("rns_manager").get("ChatManager")?.call(object {
+            fun onMessage(msg: String) {
+                runOnUiThread { Toast.makeText(this@MainActivity, "Received: $msg", Toast.LENGTH_SHORT).show() }
+            }
+        })
+
         val layout = LinearLayout(this).apply { 
             orientation = LinearLayout.VERTICAL 
             setPadding(30, 30, 30, 30)
