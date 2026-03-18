@@ -20,6 +20,7 @@ import java.net.ServerSocket
 import java.util.*
 import kotlin.concurrent.thread
 
+
 class MainActivity : AppCompatActivity() {
     private var rnsManager: PyObject? = null
     private lateinit var spinner: Spinner
@@ -32,6 +33,19 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(30, 30, 30, 30)
         }
+
+
+val btnAnnounce = Button(this).apply { text = "Announce Me"; isEnabled = false }
+layout.addView(btnAnnounce)
+
+// Inside the btnConnect.setOnClickListener success block:
+btnAnnounce.isEnabled = true
+
+btnAnnounce.setOnClickListener {
+    rnsManager?.callAttr("announce_self")
+}
+
+
         spinner = Spinner(this)
         val btnConnect = Button(this).apply { text = "Connect RNode" }
         val etDest = EditText(this).apply { hint = "Recipient Hash" }
